@@ -1,7 +1,3 @@
-// Package pubsub wraps the Google Pub/Sub client for the local emulator. It
-// provides idempotent bootstrap of the topic and push subscription, plus a thin
-// Publisher used by the command side. The same code talks to real Pub/Sub when
-// PUBSUB_EMULATOR_HOST is unset.
 package pubsub
 
 import (

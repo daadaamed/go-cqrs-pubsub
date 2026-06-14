@@ -1,6 +1,3 @@
-// Package event defines domain event types and the envelope used across the
-// write side. Events are the source of truth: commands produce them, the store
-// persists them append-only, and the read model is derived from them.
 package event
 
 import (
@@ -13,8 +10,8 @@ import (
 type Type string
 
 const (
-	TypeTodoCreated Type = "TodoCreated"
-	// TypeTodoCompleted is introduced in a later phase.
+	TypeTodoCreated   Type = "TodoCreated"
+	TypeTodoCompleted Type = "TodoCompleted"
 )
 
 // Event is the persisted envelope. ID and CreatedAt are assigned by the store
@@ -32,3 +29,8 @@ type Event struct {
 type TodoCreatedPayload struct {
 	Title string `json:"title"`
 }
+
+// TodoCompletedPayload is the JSON shape for TypeTodoCompleted. It carries no
+// fields today (the aggregate_id attribute identifies the todo), but exists so
+// the event has a typed, versionable payload as the model grows.
+type TodoCompletedPayload struct{}

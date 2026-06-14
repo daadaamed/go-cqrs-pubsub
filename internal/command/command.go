@@ -1,7 +1,3 @@
-// Package command holds the write-side HTTP handlers. A command validates
-// input, produces a domain event, appends it to the event store (source of
-// truth), then publishes it for the read side to project. It never writes
-// read-model state directly.
 package command
 
 import (
@@ -96,4 +92,36 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 
 func writeError(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]string{"error": msg})
+}
+
+func (h *Handler) CompleteTodo(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+
+	payload, err := json.Marshal(event.TodoCompletedPayload{})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "encode payload")
+		return
+	}
+
+	e := &event.Event{
+		AggregateID: id,
+		Type:        event.TypeTodoCompleted,
+		Payload:     payload,
+	}
+
+	if err := h.events.AppendEvent(r.Context(), e); err != nil {
+		log.Printf("complete todo: append: %v", err)
+		writeError(w, http.StatusInternalServerError, "could not complete todo")
+		return
+	}
+
+	if err := h.publisher.Publish(r.Context(), e); err != nil {
+		log.Printf("complete todo: publish (event %s persisted, will lag until replay): %v", e.AggregateID, err)
+	}
+
+	w.WriteHeader(http.StatusAccepted)
 }

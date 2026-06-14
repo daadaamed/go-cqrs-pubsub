@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
+
 	"github.com/daadaamed/go-cqrs-pubsub/internal/event"
 )
 
@@ -100,5 +102,41 @@ func TestCreateTodo_PublishFailureStillSucceeds(t *testing.T) {
 	}
 	if app.got == nil {
 		t.Fatalf("event should still be appended")
+	}
+}
+
+func TestCompleteTodo(t *testing.T) {
+	id := uuid.New()
+	tests := []struct {
+		name       string
+		pathID     string
+		wantStatus int
+		wantAppend bool
+	}{
+		{"valid", id.String(), http.StatusAccepted, true},
+		{"invalid id", "not-a-uuid", http.StatusBadRequest, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			app := &fakeAppender{}
+			pub := &fakePublisher{}
+			h := NewHandler(app, pub)
+
+			req := httptest.NewRequest(http.MethodPost, "/todos/"+tt.pathID+"/complete", nil)
+			req.SetPathValue("id", tt.pathID)
+			rec := httptest.NewRecorder()
+			h.CompleteTodo(rec, req)
+
+			if rec.Code != tt.wantStatus {
+				t.Fatalf("status = %d, want %d", rec.Code, tt.wantStatus)
+			}
+			if (app.got != nil) != tt.wantAppend {
+				t.Fatalf("append = %v, want %v", app.got != nil, tt.wantAppend)
+			}
+			if tt.wantAppend && app.got.Type != event.TypeTodoCompleted {
+				t.Errorf("event type = %q, want %q", app.got.Type, event.TypeTodoCompleted)
+			}
+		})
 	}
 }

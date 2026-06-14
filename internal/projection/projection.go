@@ -1,6 +1,3 @@
-// Package projection is the read-side updater. It receives Pub/Sub push
-// deliveries over HTTP, decodes the domain event, and writes the denormalized
-// read model. Handlers are idempotent because Pub/Sub delivers at-least-once.
 package projection
 
 import (
@@ -17,6 +14,7 @@ import (
 // ReadModelWriter is the slice of the store the projection needs (consumer-defined).
 type ReadModelWriter interface {
 	UpsertTodo(ctx context.Context, id uuid.UUID, title string) error
+	MarkDone(ctx context.Context, id uuid.UUID) (bool, error)
 }
 
 // Handler serves the Pub/Sub push endpoint.
@@ -74,6 +72,23 @@ func (h *Handler) HandleEvent(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		log.Printf("projection: applied TodoCreated id=%s title=%q", aggID, p.Title)
+
+	case event.TypeTodoCompleted:
+		matched, err := h.rm.MarkDone(r.Context(), aggID)
+		if err != nil {
+			// Transient (DB) failure: 5xx so Pub/Sub retries.
+			log.Printf("projection: mark done: %v", err)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		if !matched {
+			// Event for a todo that isn't in the read model. Ack anyway — the
+			// read model may not have caught up, or the todo never existed.
+			// Replay (deferred seam) reconstructs ordering; we don't retry here.
+			log.Printf("projection: TodoCompleted for unknown id=%s (no read row)", aggID)
+		} else {
+			log.Printf("projection: applied TodoCompleted id=%s", aggID)
+		}
 
 	default:
 		log.Printf("projection: ignoring unknown event type %q", evType)

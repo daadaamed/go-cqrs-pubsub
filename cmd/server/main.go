@@ -1,6 +1,3 @@
-// Command server is the single Go service. Phase 2 closes the CQRS loop:
-// POST /todos appends a TodoCreated event and publishes it; POST /events
-// receives the Pub/Sub push and updates the read model.
 package main
 
 import (
@@ -16,6 +13,7 @@ import (
 	"github.com/daadaamed/go-cqrs-pubsub/internal/command"
 	"github.com/daadaamed/go-cqrs-pubsub/internal/projection"
 	"github.com/daadaamed/go-cqrs-pubsub/internal/pubsub"
+	"github.com/daadaamed/go-cqrs-pubsub/internal/query"
 	"github.com/daadaamed/go-cqrs-pubsub/internal/store"
 )
 
@@ -79,9 +77,13 @@ func run() error {
 
 	cmd := command.NewHandler(st, ps)
 	proj := projection.NewHandler(st)
+	qry := query.NewHandler(st)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /todos", cmd.CreateTodo)
+	mux.HandleFunc("GET /todos", qry.ListTodos)
+	mux.HandleFunc("GET /todos/{id}", qry.GetTodo)
+	mux.HandleFunc("POST /todos/{id}/complete", cmd.CompleteTodo)
 	mux.HandleFunc("POST /events", proj.HandleEvent) // Pub/Sub push target
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
