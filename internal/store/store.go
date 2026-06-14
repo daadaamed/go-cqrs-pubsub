@@ -1,14 +1,15 @@
-// Package store is the pgx-backed persistence layer. In this phase it exposes
-// the write side only: appending events to the append-only event store.
+// Package store is the pgx-backed persistence layer. It exposes the write side
+// (appending events) and the read-model write path (upserting todos).
 package store
 
 import (
 	"context"
 	"fmt"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/daadaamed/todo-cqrs/internal/event"
+	"github.com/daadaamed/go-cqrs-pubsub/internal/event"
 )
 
 // Store wraps a pgx connection pool. Construct it with New; pass it explicitly
@@ -46,6 +47,21 @@ func (s *Store) AppendEvent(ctx context.Context, e *event.Event) error {
 		Scan(&e.ID, &e.CreatedAt)
 	if err != nil {
 		return fmt.Errorf("append event: %w", err)
+	}
+	return nil
+}
+
+// UpsertTodo writes the read model for one todo. It is idempotent: re-applying
+// the same event (Pub/Sub is at-least-once) produces the same row. This is the
+// projection's only write path in this phase.
+func (s *Store) UpsertTodo(ctx context.Context, id uuid.UUID, title string) error {
+	const q = `
+		INSERT INTO todos_read (id, title, done, updated_at)
+		VALUES ($1, $2, false, now())
+		ON CONFLICT (id) DO UPDATE
+		SET title = EXCLUDED.title, updated_at = now()`
+	if _, err := s.pool.Exec(ctx, q, id, title); err != nil {
+		return fmt.Errorf("upsert todo: %w", err)
 	}
 	return nil
 }

@@ -1,6 +1,6 @@
-// Command server is the single Go service. Phase 1 wires the command side only:
-// POST /todos appends a TodoCreated event to the store. Pub/Sub, projection,
-// and query endpoints arrive in later phases.
+// Command server is the single Go service. Phase 2 closes the CQRS loop:
+// POST /todos appends a TodoCreated event and publishes it; POST /events
+// receives the Pub/Sub push and updates the read model.
 package main
 
 import (
@@ -13,19 +13,30 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/daadaamed/todo-cqrs/internal/command"
-	"github.com/daadaamed/todo-cqrs/internal/store"
+	"github.com/daadaamed/go-cqrs-pubsub/internal/command"
+	"github.com/daadaamed/go-cqrs-pubsub/internal/projection"
+	"github.com/daadaamed/go-cqrs-pubsub/internal/pubsub"
+	"github.com/daadaamed/go-cqrs-pubsub/internal/store"
 )
 
 type config struct {
-	databaseURL string
-	port        string
+	databaseURL  string
+	port         string
+	projectID    string
+	topicID      string
+	subscription string
+	pushEndpoint string
 }
 
 func loadConfig() config {
+	port := getenv("PORT", "8080")
 	return config{
-		databaseURL: getenv("DATABASE_URL", "postgres://todo:todo@localhost:5432/todo?sslmode=disable"),
-		port:        getenv("PORT", "8080"),
+		databaseURL:  getenv("DATABASE_URL", "postgres://todo:todo@localhost:5432/todo?sslmode=disable"),
+		port:         port,
+		projectID:    getenv("PUBSUB_PROJECT_ID", "todo-local"),
+		topicID:      getenv("PUBSUB_TOPIC", "todo-events"),
+		subscription: getenv("PUBSUB_SUBSCRIPTION", "todo-projection"),
+		pushEndpoint: getenv("PUSH_ENDPOINT", "http://host.docker.internal:"+port+"/events"),
 	}
 }
 
@@ -45,7 +56,6 @@ func main() {
 func run() error {
 	cfg := loadConfig()
 
-	// Root context cancelled on SIGINT/SIGTERM for graceful shutdown.
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
@@ -55,11 +65,24 @@ func run() error {
 	}
 	defer st.Close()
 
-	cmd := command.NewHandler(st)
+	ps, err := pubsub.New(ctx, pubsub.Config{
+		ProjectID:    cfg.projectID,
+		TopicID:      cfg.topicID,
+		Subscription: cfg.subscription,
+		PushEndpoint: cfg.pushEndpoint,
+	})
+	if err != nil {
+		return err
+	}
+	defer ps.Close()
+	log.Printf("pubsub ready: topic=%s sub=%s push=%s", cfg.topicID, cfg.subscription, cfg.pushEndpoint)
+
+	cmd := command.NewHandler(st, ps)
+	proj := projection.NewHandler(st)
 
 	mux := http.NewServeMux()
-	// Go 1.22+ method+path patterns — no router dependency needed.
 	mux.HandleFunc("POST /todos", cmd.CreateTodo)
+	mux.HandleFunc("POST /events", proj.HandleEvent) // Pub/Sub push target
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
@@ -72,7 +95,6 @@ func run() error {
 		WriteTimeout: 10 * time.Second,
 	}
 
-	// Run the server until the context is cancelled.
 	errCh := make(chan error, 1)
 	go func() {
 		log.Printf("listening on :%s", cfg.port)
