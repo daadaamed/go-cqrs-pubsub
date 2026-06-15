@@ -1,0 +1,62 @@
+# Event-Driven Todo (local-first, CQRS + Event Sourcing)
+ 
+A small Go todo application demonstrating **CQRS** and **event sourcing** with an
+event-driven write→read loop, running entirely locally — no cloud account, no
+authentication. Postgres is the event store and read model; the Google Pub/Sub
+emulator is the message bus.
+ 
+The read model is fully derived from an append-only event log and can be
+reconstructed from scratch at any time (`POST /admin/rebuild`), which is the
+defining property of event sourcing: **events are the only source of truth.**
+
+## Architecture
+ 
+The system separates the **write side** (commands that produce events) from the
+**read side** (queries that serve a denormalized projection). They never touch
+each other's tables; the message bus is the only link between them.
+
+## API
+ 
+```
+POST   /todos                     create a todo            201 {"id": "..."}
+POST   /todos/{id}/complete       mark a todo done         202
+GET    /todos                     list todos (newest first) 200 [ ... ]
+GET    /todos/{id}                get one todo             200 | 404
+POST   /events                    Pub/Sub push target       (internal)
+POST   /admin/rebuild             replay events → read model 200 {"events_applied": N}
+GET    /healthz                   liveness                  200 ok
+```
+
+
+## Run it
+ 
+```sh
+cp .env.example .env
+make up                       # Postgres + Pub/Sub emulator, waits until healthy
+make migrate-up               # creates events + todos_read
+ 
+set -a; source .env; set +a   # export env (PUBSUB_EMULATOR_HOST etc.) for the app
+make run                      # starts the server on :8080
+```
+
+
+
+## Try the full loop
+ 
+```sh
+# create
+ID=$(curl -s -X POST localhost:8080/todos -d '{"title":"buy milk"}' | jq -r .id)
+sleep 1
+curl -s localhost:8080/todos | jq          # the todo appears (via the projection)
+ 
+# complete
+curl -s -X POST localhost:8080/todos/$ID/complete
+sleep 1
+curl -s localhost:8080/todos/$ID | jq      # done: true
+ 
+# prove the read model is disposable: wipe it, then rebuild from events
+docker exec todo-postgres psql -U todo -d todo -c "TRUNCATE todos_read"
+curl -s localhost:8080/todos | jq          # []  — empty
+curl -s -X POST localhost:8080/admin/rebuild | jq   # {"events_applied": N}
+curl -s localhost:8080/todos | jq          # fully reconstructed from the event log
+```
