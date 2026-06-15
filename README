@@ -60,3 +60,24 @@ curl -s localhost:8080/todos | jq          # []  — empty
 curl -s -X POST localhost:8080/admin/rebuild | jq   # {"events_applied": N}
 curl -s localhost:8080/todos | jq          # fully reconstructed from the event log
 ```
+
+## How they work together
+User POST /todos
+    ↓
+command.go (validates, creates event)
+    ↓
+store.go (saves to events table)
+    ↓
+pubsub.go (publishes event)
+    ↓
+Pub/Sub delivers to POST /events
+    ↓
+projection.go (receives event)
+    ↓
+store.go (updates todos_read table)
+    ↓
+User GET /todos
+    ↓
+query.go (reads from todos_read)
+    ↓
+User sees their todo
