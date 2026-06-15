@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/daadaamed/go-cqrs-pubsub/internal/admin"
 	"github.com/daadaamed/go-cqrs-pubsub/internal/command"
 	"github.com/daadaamed/go-cqrs-pubsub/internal/projection"
 	"github.com/daadaamed/go-cqrs-pubsub/internal/pubsub"
@@ -78,6 +79,7 @@ func run() error {
 	cmd := command.NewHandler(st, ps)
 	proj := projection.NewHandler(st)
 	qry := query.NewHandler(st)
+	adm := admin.NewHandler(st)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /todos", cmd.CreateTodo)
@@ -85,6 +87,7 @@ func run() error {
 	mux.HandleFunc("GET /todos/{id}", qry.GetTodo)
 	mux.HandleFunc("POST /todos/{id}/complete", cmd.CompleteTodo)
 	mux.HandleFunc("POST /events", proj.HandleEvent) // Pub/Sub push target
+	mux.HandleFunc("POST /admin/rebuild", adm.Rebuild)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
